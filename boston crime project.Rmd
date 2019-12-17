@@ -1,0 +1,475 @@
+---
+title: "STAT 184 Final project" 
+subtitle: "Boston Crime Dataset"
+author: "Keenan Harleston"
+output: html_notebook
+---
+Selecting an adequate dataset to analyze was quite interesting and after some research I came aross a dataset regarding Boston Crime data on kaggle.com. The dataset's records begin in June 14, 2015 and continue to September 3, 2018 making it quite a large table. The data was provided as a .csv file therfore I imported the data using the read.csv() function. After importing the datasets, I used quick presentations functions to take a glance at the data. Once all of the data is loaded I formulated several questions that quided the analysis: 1) How has crime changed over the years? 2) Is it possible to predict where or when a crime will be committed? 3) Which areas of the city have evolved over this time span? 4) In which area(s) have most of the crimes been committed? 5) What kind of affect did the legalization of marijuana have on drug related crimes within Boston?
+
+```{r}
+crime = read.csv("crime.csv")
+offense_codes = read.csv("offense_codes.csv")
+library(DataComputing)
+library(mosaic)
+library(devtools)
+library(leaflet)
+library(ggplot2)
+library(gganimate)
+library(tidyverse)
+library(party)
+library(lubridate)
+head(crime)
+nrow(crime)
+```
+
+```{r}
+head(offense_codes)
+```
+
+# DATA WRANGLING
+At first glance, I noticed that the column titled "SHOOTING" had missing data and I wanted to see how much of the column was missing before beginning the full statistical analysis. Below shows that  the SHOOTING column actually has the same amount of missing data as number of rows in the dataset.
+```{r}
+sum(is.na(crime$SHOOTING))
+```
+
+
+```{r}
+crime <-
+  crime %>%
+  transform(OFFENSE_CODE_GROUP = as.factor(OFFENSE_CODE_GROUP))%>%
+  transform(OCCURRED_ON_DATE = as.Date(OCCURRED_ON_DATE))%>%
+  #transform(HOUR = as.integer(HOUR))%>%
+  transform(OFFENSE_CODE = as.character(OFFENSE_CODE))
+
+crime  
+offense_codes <- offense_codes %>%
+  transform(CODE = as.character(CODE))
+offense_codes
+
+
+```
+This dataset contains three main categories in which its variables can be divided into for further analysis. These three categories are found below: starting with variables related to location,
+```{r}
+locationData <-
+  crime %>%
+  select(STREET, Long, Lat, Location, DISTRICT, REPORTING_AREA, OFFENSE_CODE_GROUP) %>%
+  na.omit()
+
+```
+
+```{r}
+#time data
+
+timeData <-
+  crime %>%
+  select(OCCURRED_ON_DATE,HOUR, DAY_OF_WEEK,MONTH, YEAR, OFFENSE_CODE_GROUP) %>%
+  na.omit()
+```
+
+```{r}
+# crime data
+crime_data <-
+  crime %>%
+  select(INCIDENT_NUMBER, OFFENSE_CODE, OFFENSE_CODE_GROUP, OFFENSE_DESCRIPTION, UCR_PART) %>%
+  na.omit()
+```
+
+
+how many crimes happen per day?
+```{r}
+day_of_week_table <-
+  crime %>% 
+  group_by(DAY_OF_WEEK) %>%
+  summarise(num_occurances = n()) %>%
+  arrange(desc(num_occurances)) 
+day_of_week_table
+
+
+```
+number of each crime committed
+```{r}
+top_5_crimes <-
+crime_data %>%
+  group_by(OFFENSE_CODE_GROUP) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))%>%
+  head(5)
+
+top_5_crimes
+crime_data %>%
+  group_by(OFFENSE_CODE_GROUP)%>%
+  summarise(total = n()) %>%
+  arrange(desc(total)) %>%
+  head(10)
+```
+
+how many violent crimes happen per street?
+```{r}
+violent_crimes <-
+  crime %>%
+  filter(UCR_PART == "Part One") %>%
+  group_by(OFFENSE_CODE_GROUP) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+violent_crimes
+```
+
+
+
+
+```{r}
+
+crime_by_district <-
+  crime %>% 
+  group_by(DISTRICT) %>%
+  summarise(count = n())%>%
+  mutate(percent= round(count/sum(count) * 100)) %>%
+  arrange(desc(percent))
+
+
+```
+Visualization Of the crime frequency per distrct 
+frequency of crime per distrcit
+```{r}
+ggplot(subset(crime,!is.na(DISTRICT)))+
+  aes(x=DISTRICT)+
+  geom_bar(stat = "count",fill='blue') + 
+  labs(title="How many crimes occur by district?",
+       x="District",
+       y="Number of Crimes")
+```
+```{r}
+ggplot(data = crime_by_district,aes(x = DISTRICT, y = count)) +
+  geom_point(aes(size = percent))
+
+```
+
+
+Below shows the number of each individual crime that occur each year
+```{r}
+crime_types <- 
+  crime %>%
+  group_by(OFFENSE_CODE_GROUP, YEAR) %>%
+  mutate(total = n()) %>%
+  distinct(OFFENSE_CODE_GROUP, total)%>%
+  arrange(YEAR)
+crime_types
+```
+
+
+
+
+Investigating drug related crimes 
+```{r}
+drugCrimes <- 
+  crime %>%
+  group_by(OFFENSE_CODE_GROUP , YEAR, MONTH)%>%
+  mutate(total = n()) %>%
+  distinct(OFFENSE_CODE_GROUP, total)%>%
+  arrange(YEAR, MONTH) %>%
+  filter(OFFENSE_CODE_GROUP == "Drug Violation") %>% 
+  transform(YEAR = as.character(YEAR))
+
+drugCrimes  
+```
+
+```{r}
+# joining the offense code table with drug table
+
+crimeJoin <-
+  dplyr::left_join(crime, offense_codes, by = c("OFFENSE_CODE"= "CODE")) 
+crimeJoin
+
+```
+
+Due to the fact that the legalization of marijuana has become quite a trend throughtout the US, I was curious of what effect it had in Boston. Below shows the number of drug related charges and you see a significant drop around mid 2016 becasue marijuana was legalized in July of 2016.
+```{r}
+
+crime_types %>%
+  filter(OFFENSE_CODE_GROUP %in% c("Drug Violation")) %>%
+ggplot(aes(x = YEAR, y = total)) +
+  geom_line() 
+```
+
+Here is a graph showing the significant drop in drug related charges with an x-intercept at the time when marijuana was legalized.
+```{r}
+
+drugCrimes %>%
+  filter(YEAR == "2016") %>%
+  ggplot(aes(x = MONTH , y = total)) +
+  geom_line() +
+  geom_smooth() +
+  geom_vline(xintercept = 7)
+```
+
+
+```{r}
+
+crime %>%
+  filter(str_detect(OFFENSE_CODE_GROUP, "^Drug")) %>%
+  filter(OCCURRED_ON_DATE <= ymd("2016-12-30")) %>%
+  filter(OCCURRED_ON_DATE > ymd("2016-01-01")) %>%
+  count(OCCURRED_ON_DATE) %>%
+  ggplot(aes(OCCURRED_ON_DATE, n))+
+  geom_line() 
+```
+when comparing the two graphs above you see how the legalization of marijuanaa has affected the drug crime in boston
+
+
+
+
+
+
+
+## Relationship between crime occurances and time
+
+```{r}
+crimes_by_year <-
+  crime %>% 
+  group_by(YEAR) %>%
+  summarise(count = n())
+crimes_by_year 
+
+
+  
+```
+```{r}
+#wide format of number of crimes per year
+crimes_by_year %>%
+  spread(key= YEAR, value = count)
+```
+
+
+
+```{r}
+crime %>% 
+  
+  count(OCCURRED_ON_DATE) %>% 
+  ggplot(aes(OCCURRED_ON_DATE, n))+
+  geom_line()+ 
+  geom_smooth()+
+  labs(title ="Crime Timeline 06/14/15 - 09/03/18", x = "Year", y ="Number of Crimes", color = "red")
+```
+
+According to the timeseries above crime trends follow a consistent trend with dips on number of occurances at the end of each year. 
+
+```{r}
+crimes_by_month <-
+  crime %>% 
+  group_by(MONTH) %>%
+  summarise(count = n())
+  
+```
+
+
+```{r}
+crime %>%
+  ggplot(aes(x=DAY_OF_WEEK)) + 
+  geom_bar(fill="gray", adjust = 2)
+```
+
+
+
+Visualization of Crimes by Day of and UCT_PART
+```{r}
+
+  ggplot(crime, aes(x= DAY_OF_WEEK, fill = UCR_PART)) +
+  geom_bar() +
+  theme_bw() +
+  labs( x = "Day of the week") 
+  
+
+```
+
+```{r}
+ggplot(crime,aes( x= MONTH )) + 
+  geom_bar() +
+  ggtitle("Crimes by Month")
+```
+
+
+```{r}
+ggplot(data = crime, aes(x= YEAR, fill = UCR_PART )) +
+  geom_histogram()
+```
+
+```{r}
+crime %>%
+  group_by(OFFENSE_CODE_GROUP, STREET) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))
+```
+```{r}
+topCrimes <- 
+  crime %>%
+  group_by(OFFENSE_CODE_GROUP)%>%
+  summarise(total = n())%>%
+  filter(total >= 18075) %>%
+  arrange(desc(total))
+ 
+ 
+
+```
+
+
+```{r}
+streets <-
+  crime %>%
+  group_by(OFFENSE_CODE_GROUP, STREET) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))
+pattern <- "(STREET| ROAD|ST|STREET|RD|HIGHWAY|HWY|BYPASS|PIKE|TURNPIKE|AVE|AVENUE|BOULEVARD|BLVD)"
+
+crimesOnMajorRoad <-streets %>%
+  filter(grepl(pattern, STREET))
+crimesOnMajorRoad
+```
+how many crimes happen on each day?
+```{r}
+day_counts <-
+  crime %>%
+  group_by(OCCURRED_ON_DATE, DAY_OF_WEEK) %>%
+  mutate(count = n()) %>%
+  arrange((OCCURRED_ON_DATE)) %>%
+  select(DAY_OF_WEEK,OCCURRED_ON_DATE,count) %>%
+  distinct(DAY_OF_WEEK,OCCURRED_ON_DATE,count)
+day_counts
+
+```
+
+
+```{r}
+library(viridis)
+library(hrbrthemes)
+library(plotly)
+time <- 
+# Load dataset from github
+df <- crime_types %>%
+  filter(OFFENSE_CODE_GROUP %in% c("Motor Vehicle Accident Response", "Medical Assistance", "Investigate Person","Larceny", "Residential Burglary"))
+
+
+# Graph
+p <- df %>% 
+  ggplot( aes(x=YEAR, y=total, fill=OFFENSE_CODE_GROUP, text=OFFENSE_CODE_GROUP)) +
+    geom_area( ) +
+  scale_fill_viridis(discrete = TRUE) +
+    theme(legend.position="none") +
+    ggtitle("How many of the top 5 crimes occur over the years") +
+    theme_ipsum() +
+    theme(legend.position="none")
+p <- ggplotly(p, tooltip = "text")
+p
+
+
+```
+
+
+```{r}
+#crime by district
+  crime %>% 
+  
+  group_by(DISTRICT) %>%
+  summarise(count = n())%>%
+  mutate(percent= round(count/sum(count) * 100)) %>%
+  arrange(desc(percent))
+#crime by district at certain long lat, however its repeating the count
+xyz <-
+  crime %>% 
+  
+  group_by(DISTRICT) %>%
+  mutate(count = n())%>%
+  mutate(percent= round(count/sum(count) * 100)) %>%
+  #arrange(desc(percent))%>%
+  select(DISTRICT, count,Lat, Long)
+ 
+xyz %>%
+  group_by(DISTRICT, count)%>%
+  distinct() %>%
+  filter(str_detect(Lat, ""))
+
+  
+
+```
+
+
+## MAPPING 
+Given that this dataset contained location data pertaining to each reported incident I thought that the leaflet package would be vital in illustrating where crimes occured throughout Boston.
+
+The first map that I used was one that shows where on a map the Boston is located.
+```{r}
+leaflet() %>%
+  addTiles() %>%
+  addMarkers(lng=-71.057, lat=42.361, popup="Boston, MA") %>%
+  setView(lng=-71.057, lat=42.361, zoom = 10)
+```
+
+
+kidnapping distance calculations
+```{r}
+kidnap <-
+  crime %>%
+  select(INCIDENT_NUMBER,STREET,OFFENSE_CODE,OFFENSE_CODE_GROUP, OFFENSE_DESCRIPTION, Long, Lat, Location, OCCURRED_ON_DATE)%>%
+  filter(OFFENSE_DESCRIPTION %in% c("MISSING PERSON")) %>%
+  arrange(OCCURRED_ON_DATE)
+
+
+found <-
+  crime %>%
+  select(INCIDENT_NUMBER,STREET,OFFENSE_CODE,OFFENSE_CODE_GROUP, OFFENSE_DESCRIPTION, Long, Lat, Location, OCCURRED_ON_DATE)%>%
+  filter(OFFENSE_DESCRIPTION %in% c("MISSING PERSON - LOCATED")) %>%
+  arrange(OCCURRED_ON_DATE) %>%
+  rename(Lat2 = Lat, Long2 = Long )
+
+```
+
+
+
+
+```{r}
+kidnapPairs <-
+  merge(data.frame(kidnap, row.names = NULL), data.frame(found, row.names = NULL), by = 0, all = TRUE)[-1]
+
+```
+
+
+
+```{r}
+crime %>%
+  select(INCIDENT_NUMBER,STREET,OFFENSE_CODE,OFFENSE_CODE_GROUP, OFFENSE_DESCRIPTION, Long, Lat, Location, OCCURRED_ON_DATE)%>%
+  #filter(OFFENSE_DESCRIPTION %in% c("MISSING PERSON"))%>%
+  mutate(missing = OFFENSE_CODE_GROUP == "Missing Person Reported") %>%
+  filter(OFFENSE_CODE_GROUP %in% c("Missing Person Reported", "Missing Person Located"))%>%
+  ggplot(aes(x = OFFENSE_CODE_GROUP, fill = missing)) +
+  geom_bar()
+
+```
+This barplot illustrates that there are more missing people located than are reported which is quite interresting given the police aren't aware of many of these missing persons.
+
+Below shows the locations of all repoted kidnappings/locations of where victims were found. The red circles indicate the kidnapping location and the blue indicates the locations where missing people were found
+```{r}
+kidnapMap <-
+  leaflet(kidnapPairs)%>%
+  addTiles() %>%
+  addCircles(lat = ~Lat, lng = ~Long, radius = 2, color= "red")%>%
+  addCircles(lat = ~Lat2, lng = ~Long2, radius = 2, color= "blue") %>%
+  setView(-71.05, 42.36, zoom = 12)
+kidnapMap
+
+```
+
+
+Locations of all homicides in boston
+```{r}
+crimeJoin %>%
+  group_by(OFFENSE_CODE_GROUP,DAY_OF_WEEK, HOUR, UCR_PART )%>%
+  filter(OFFENSE_CODE_GROUP %in% c("Homicide")) %>% 
+  leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(radius = 2, color = "red") %>%
+  setView(-71.05, 42.36, zoom = 12)
+  
+```
+
+
+## Conclusion
+After analyzing the Boston Crime Data Set, we can clearly see the trends and relations between the types of crimes, location and the time of the crime. Some of the notable takeaways from the analysis are that most crimes in Boston occurred on a Wednesday and during the month of October. The most affected districts in Boston are Dorchester(C11), South-End, Roxbury(B2). It can be noted that the highest number of the crimes were reported during summer months of July and Auguest. Motor-Vehicle accident response were the highest number of report registered with the Boston Police.
